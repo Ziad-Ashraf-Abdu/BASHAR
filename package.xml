@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>bashar</name>
+  <version>1.0.0</version>
+  <description>
+    Bimanual Autonomous System for Handling and Articulated Robotics.
+    A generalized Kinematics, Dynamics, and Control middleware library.
+  </description>
+  
+  <maintainer email="ziad.mohamed04@eng-st.cu.edu.eg">Ziad Ashraf</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>python3-numpy</depend>
+  <depend>xacro</depend>
+  <depend>urdf</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
