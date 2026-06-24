@@ -8,10 +8,15 @@ class RobotState:
     Enforces mechanical limits automatically based on the compiled JSON profile.
     """
     def __init__(self, profile_dict: dict, initial_positions: list = None):
-        self.num_joints = len(profile_dict['kinematic_tree']['joints'])
-        
+        _active_types = {'revolute', 'continuous', 'prismatic'}
+        _active_joints = [
+            j for j in profile_dict['kinematic_tree']['joints']
+            if j.get('type', 'fixed') in _active_types
+        ]
+        self.num_joints = len(_active_joints)
+
         # Extract the specific safety limits for every active joint
-        self.limits = [j['limits'] for j in profile_dict['kinematic_tree']['joints']]
+        self.limits = [j['limits'] for j in _active_joints]
         
         if initial_positions is not None:
             if len(initial_positions) != self.num_joints:

@@ -1,0 +1,18 @@
+# Virtual environment
+.venv/
+
+# Build / packaging artifacts
+*.egg-info/
+dist/
+build/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Generated config profiles (compiled at runtime from URDF)
+config/profiles/
+
+# IDE
+.vscode/
+.idea/

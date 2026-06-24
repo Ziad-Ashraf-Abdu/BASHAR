@@ -48,6 +48,13 @@ class BasharSystem:
     # -----------------------------------------------------------------------
     def update_state(self, current_positions: list):
         """Updates the internal mathematical state to match the physical hardware encoders."""
+        n = self.state.num_joints
+        if len(current_positions) != n:
+            raise ValueError(
+                f"[BASHAR] update_state received {len(current_positions)} positions "
+                f"but the robot '{self.robot_name}' has {n} active joints. "
+                f"Pass exactly {n} values."
+            )
         self.state.positions = np.array(current_positions, dtype=float)
         self.state.clip()
 
