@@ -7,6 +7,7 @@ from bashar.utils.config_parser import ProfileParser
 from bashar.core.kinematics import BasharKinematics
 from bashar.core.dynamics import BasharDynamics
 from bashar.core.controller import RobotState, CollisionGuard, AutoPilot, ComputedTorqueController
+from bashar.core.trajectory import Trajectory
 
 
 def compile_profile(model_path: str, output_name: str, output_dir: str = "config/profiles", verbose: bool = False) -> bool:

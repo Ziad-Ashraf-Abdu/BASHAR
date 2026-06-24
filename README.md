@@ -93,13 +93,14 @@ Three classes:
 
 **`RobotState`** — manages the joint position array. Reads hardware limits directly from the JSON profile so it auto-clips to whatever the robot's actual range of motion is. Works for any N-DOF configuration.
 
-**`CollisionGuard`** — manual mode safety layer. The Brain passes a `desired_dtheta` and a list of obstacle coordinates (in the robot's base frame). The guard computes a repulsive wrench using Artificial Potential Fields, maps it back to joint space via the pseudo-inverse Jacobian, and adds it to the command before applying hardware limits.
+**`CollisionGuard`** — manual mode safety layer. The Brain passes a `desired_dtheta` and a list of obstacle coordinates (in the robot's base frame). The guard computes a repulsive wrench using Artificial Potential Fields, maps it back to joint space, and adds it to the command before applying hardware limits.
 
 A few things worth noting:
 - Obstacles are inflated by a `body_radius` parameter — so the system accounts for the physical thickness of the arm, not just the center-point of the end-effector
 - The input sanitizer handles malformed obstacle arrays: a single `[x, y, z]` gets wrapped, a 2D `[x, y]` gets padded with the current Z height (treating it as an infinite vertical cylinder), and anything unparseable gets logged and skipped without crashing the loop
+- Jacobian inversion uses **Damped Least Squares (DLS)** (`J⁺ = Jᵀ(JJᵀ + λ²I)⁻¹`) instead of plain pseudoinverse. This keeps the mapping stable when the arm is near a singularity. The damping factor `λ` defaults to 0.05 and is tunable on the constructor.
 
-**`AutoPilot`** — autonomous mode. Brain gives a target `[x, y, z]` and an obstacle list. The autopilot computes an attractive velocity toward the goal, maps it to joint space, then passes it through the `CollisionGuard`. The guard handles obstacle avoidance automatically — the autopilot doesn't need to know about the specifics.
+**`AutoPilot`** — autonomous mode. Brain gives a target `[x, y, z]` and an obstacle list. The autopilot computes an attractive velocity toward the goal, maps it to joint space via DLS, then passes it through the `CollisionGuard`. The guard handles obstacle avoidance automatically — the autopilot doesn't need to know about the specifics.
 
 **`ComputedTorqueController`** — implements the full feedforward + feedback control law:
 ```
@@ -111,10 +112,10 @@ Predicts the physics to cancel it out, then applies a PD correction on top.
 
 ### `api.py` — The Public Interface
 
-The only file a user should ever import. Two things in it:
+The only file a user should ever import.
 
 ```python
-from bashar.api import compile_profile, BasharSystem
+from bashar.api import compile_profile, BasharSystem, Trajectory
 
 # Step 1: compile once
 compile_profile("robot.urdf", "my_robot", verbose=True)
@@ -129,9 +130,30 @@ tip = robot.get_tip_position()
 safe_joints = robot.manual_step(dtheta, obstacles=[...])
 new_joints, done = robot.auto_step(target_xyz=[0.4, 0.0, 0.3], obstacles=[...])
 torques = robot.calculate_motor_torques(current_dtheta, desired_theta, desired_dtheta)
+
+# Trajectory planning
+path = Trajectory.joint_trajectory(start, end, Tf=3.0, N=100, method='quintic')
+path_with_vel = Trajectory.joint_trajectory_velocities(start, end, Tf=3.0, N=100)
 ```
 
 `update_state()` validates the length of the input against the robot's actual DOF count and raises a clear error if they don't match — we fixed a bug here where a silent `IndexError` was bubbling up from inside `clip()`.
+
+---
+
+### `core/trajectory.py` — Trajectory Generation
+
+Time-scaling functions and path generators for joint-space and task-space motion.
+
+Three time-scaling profiles:
+- **Cubic** — 3rd-order polynomial. Zero velocity at start/end.
+- **Quintic** — 5th-order polynomial. Zero velocity *and* zero acceleration at start/end. Better for payload safety and torque limits.
+- **Trapezoidal** — Bang-coast-bang velocity profile. Fastest average speed, useful when you want maximum throughput without caring about smoothness.
+
+Path generation:
+- `joint_trajectory(start, end, Tf, N)` → list of N joint configs
+- `joint_trajectory_velocities(start, end, Tf, N)` → list of (θ, θ̇) tuples (needed for computed torque control)
+- `via_point_trajectory(points, times, N_per_segment)` → concatenated path through multiple waypoints
+- `screw_trajectory(T_start, T_end, Tf, N)` → list of N SE(3) transforms along the shortest task-space path
 
 ---
 
@@ -153,6 +175,16 @@ python3 test_integration.py
 
 ---
 
+### `examples/`
+
+Three scripts in the `examples/` directory:
+
+- **`basic_usage.py`** — standalone walkthrough of the full pipeline. Start here. Covers profile compilation, FK, trajectory planning, torque control, manual mode, and autonomous stepping.
+- **`ros2_node.py`** — ROS 2 node template. Subscribes to `/joint_states`, publishes to `/joint_trajectory_controller/joint_trajectory`, and exposes `set_target()` / `update_obstacles()` for the Brain to call.
+- **`hardware_loop.py`** — bare-metal control loop. No ROS dependency. Shows the encode→update→control→write pattern with stubbed hardware functions you replace with your actual driver calls.
+
+---
+
 ## Installation
 
 ```bash
@@ -167,17 +199,11 @@ Requires Python 3.10+. Only dependency is `numpy`. XACRO support requires ROS 2 
 
 ## What's still missing
 
-These are the known gaps before this can be considered production-ready:
+The main remaining gap is tests:
 
-**Trajectory generation** — No time-scaling or path interpolation yet. The original SEAS kinematics file had cubic, quintic, and trapezoidal profiles. These should move into `core/trajectory.py`.
+**Unit tests** — `tests/` is empty. Need math validation tests for at minimum: forward kinematics round-trip, Jacobian finite-difference check against numerical differentiation, DLS stability check at a known singular config, and joint limit clamping.
 
-**Unit tests** — `tests/` is empty. Need math validation tests for at minimum: forward kinematics round-trip, Jacobian finite-difference check, and limit clamping.
-
-**Example scripts** — There's nothing in the repo yet showing how to actually connect this to a ROS 2 node or a hardware loop. An `examples/` directory with a basic usage script would help the team onboard faster.
-
-**Singularity handling** — The IK and autopilot use `np.linalg.pinv` which can blow up near singularities. Should swap to Damped Least Squares (DLS) with a tunable damping factor for robustness.
-
-**`example_arm.json`** — A hand-annotated template profile so someone can use the library without a URDF file (useful for simple test setups or quick prototyping).
+**`example_arm.json`** — A hand-annotated template profile so someone can use the library without a URDF file (useful for simple test setups or quick prototyping). This would let a teammate try the examples without having a URDF ready.
 
 ---
 

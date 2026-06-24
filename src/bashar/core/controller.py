@@ -57,11 +57,12 @@ class CollisionGuard:
     All obstacle coordinates passed to this class MUST be relative to the robot's 
     Global Base Frame (x=0, y=0, z=0).
     """
-    def __init__(self, kin: BasharKinematics, influence_radius=0.20, repulse_gain=1.5, body_radius=0.08):
+    def __init__(self, kin: BasharKinematics, influence_radius=0.20, repulse_gain=1.5, body_radius=0.08, damping=0.05):
         self.kin = kin
         self.influence_radius = influence_radius  
         self.repulse_gain = repulse_gain          
-        self.body_radius = body_radius            
+        self.body_radius = body_radius
+        self.damping = damping  # DLS damping factor for Jacobian inversion near singularities
 
     def _sanitize_obstacles(self, raw_obstacles, current_z: float) -> list:
         if not raw_obstacles:
@@ -105,7 +106,7 @@ class CollisionGuard:
         d_theta_correction = np.zeros(state.num_joints)
         if np.any(V_repulse[3:] != 0):
             Js = self.kin.jacobian_space(state.positions)
-            d_theta_correction = np.linalg.pinv(Js) @ V_repulse
+            d_theta_correction = self.kin.dls_pinv(Js, self.damping) @ V_repulse
 
         d_theta_correction = np.clip(d_theta_correction, -0.6, 0.6)
         final_d_theta = np.array(d_theta, dtype=float) + d_theta_correction
@@ -120,12 +121,11 @@ class AutoPilot:
     Hardware-agnostic Autonomous Navigation.
     Drives the robot to a specific [x, y, z] target while avoiding obstacles.
     """
-    def __init__(self, kin: BasharKinematics, kp_linear=1.0, influence_radius=0.20, repulse_gain=1.5, body_radius=0.08):
+    def __init__(self, kin: BasharKinematics, kp_linear=1.0, influence_radius=0.20, repulse_gain=1.5, body_radius=0.08, damping=0.05):
         self.kin = kin
         self.kp_linear = kp_linear
-        
-        # We compose the CollisionGuard inside the AutoPilot to keep our logic DRY (Don't Repeat Yourself)
-        self.guard = CollisionGuard(kin, influence_radius, repulse_gain, body_radius)
+        self.damping = damping  # DLS damping factor
+        self.guard = CollisionGuard(kin, influence_radius, repulse_gain, body_radius, damping)
 
     def step(self, state: RobotState, target_xyz: list, obstacles: list, threshold=0.01) -> tuple[RobotState, bool]:
         """
@@ -151,9 +151,9 @@ class AutoPilot:
         # Pack it into a spatial velocity vector [omega_x, omega_y, omega_z, v_x, v_y, v_z]
         V_attract = np.array([0.0, 0.0, 0.0, v_pull[0], v_pull[1], v_pull[2]])
         
-        # 3. Map the task-space pull into joint-space angles
+        # 3. Map the task-space pull into joint-space angles via DLS (stable near singularities)
         Js = self.kin.jacobian_space(state.positions)
-        d_theta_attract = np.linalg.pinv(Js) @ V_attract
+        d_theta_attract = self.kin.dls_pinv(Js, self.damping) @ V_attract
         # 4. The Magic: Pass the intended trajectory through the Collision Guard
         # If the direct path goes through a wall, the Guard will automatically bend the arm around it.
         state = self.guard.filter_command(state, d_theta_attract.tolist(), obstacles)

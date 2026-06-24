@@ -241,6 +241,26 @@ class BasharKinematics:
     def jacobian_body(self, Js, T_final):
         return self.adjoint_matrix(self.trans_inv(T_final)) @ Js
 
+    @staticmethod
+    def dls_pinv(J: np.ndarray, damping: float = 0.05) -> np.ndarray:
+        """
+        Damped Least Squares (DLS) pseudo-inverse.
+        Numerically stable near kinematic singularities where plain pinv blows up.
+
+        Formula: J_dls = Jᵀ (J Jᵀ + λ²I)⁻¹
+
+        The damping term λ² keeps the matrix invertible even when J loses rank
+        (e.g. straight-arm singularity, workspace boundary).
+
+        Args:
+            J:       The Jacobian matrix (m × n, typically 6 × n_joints).
+            damping: λ — trade-off between accuracy and stability.
+                     Typical range: 0.01 (tight) to 0.1 (robust).
+                     Default 0.05 works well for most serial manipulators.
+        """
+        m = J.shape[0]  # task-space dimension (6 for spatial velocity)
+        return J.T @ np.linalg.inv(J @ J.T + damping ** 2 * np.eye(m))
+
     def ellipsoid_analysis(self, J):
         J_omega = J[:3, :]
         J_v     = J[3:, :]
@@ -265,7 +285,19 @@ class BasharKinematics:
     # Inverse Kinematics
     # =========================================================================
 
-    def ik_body(self, T_sd, theta_guess, e_omega=0.001, e_v=0.0001, max_iter=50):
+    def ik_body(self, T_sd, theta_guess, e_omega=0.001, e_v=0.0001, max_iter=50, damping=0.05):
+        """
+        Numerical IK via Newton-Raphson on the body Jacobian.
+        Uses Damped Least Squares for stability near singularities.
+
+        Args:
+            T_sd:        Target SE(3) transform.
+            theta_guess: Initial joint angles (list or array of length n_joints).
+            e_omega:     Angular error tolerance (rad).
+            e_v:         Linear error tolerance (m).
+            max_iter:    Maximum Newton-Raphson iterations.
+            damping:     DLS damping factor λ. Increase if the solver diverges near singularities.
+        """
         theta = np.array(theta_guess, dtype=float)
 
         for _ in range(max_iter):
@@ -276,10 +308,8 @@ class BasharKinematics:
             if np.linalg.norm(V_b[:3]) < e_omega and np.linalg.norm(V_b[3:]) < e_v:
                 return theta, True
 
-            Js   = self.jacobian_space(theta)
-            Jb   = self.jacobian_body(Js, T_sb)
-            
-            # np.linalg.pinv automatically handles the redundancy (7 DOF > 6 spatial dims)
-            theta += np.linalg.pinv(Jb) @ V_b
+            Js  = self.jacobian_space(theta)
+            Jb  = self.jacobian_body(Js, T_sb)
+            theta += self.dls_pinv(Jb, damping) @ V_b
 
         return theta, False
